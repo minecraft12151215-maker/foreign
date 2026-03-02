@@ -28,7 +28,7 @@ if not TOKEN:
 TARGET_CHANNEL_ID = 1478050181126688870
 
 # 3. 自動播報時間設定 (外資數據通常下午出來，建議設定 18:00 之後)
-REPORT_TIME = "23:40"
+REPORT_TIME = "20:00"
 
 # ✅ 建立台灣專屬時區 (UTC+8)
 tw_tz = datetime.timezone(datetime.timedelta(hours=8))
@@ -196,5 +196,6 @@ async def on_ready():
     print(f'🌐 治癒強迫症版引擎(富邦專武) {bot.user} 已上線！')
     if not schedule_task.is_running():
         schedule_task.start()
+
 
 bot.run(TOKEN)
