@@ -4,16 +4,15 @@ import os
 from dotenv import load_dotenv
 import datetime
 import requests
-import pandas as pd
+from bs4 import BeautifulSoup
 
-# 載入 .env 變數 (雲端部署時會自動抓取 Railway 上的變數)
+# 載入 .env 變數
 load_dotenv()
 
 TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = os.getenv('CHANNEL_ID')
 
 intents = discord.Intents.default()
-# 因為要讀取你輸入的指令，確保 message_content 權限有開啟
 intents.message_content = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -28,17 +27,14 @@ async def on_ready():
         daily_report.start()
         print("已啟動每晚 8 點的外資籌碼排程播報任務。")
 
-# --- 【新增的手動觸發指令】 ---
-@bot.command(name='籌碼', help='手動查詢今日外資買賣超前十名')
+@bot.command(name='籌碼', help='手動查詢最新外資買賣超前十名')
 async def manual_report(ctx):
-    today = datetime.datetime.now(tz)
-    await ctx.send("🔄 正在手動抓取今日外資買賣超資料，請稍候...")
+    await ctx.send("🔄 正在從富邦 MoneyDJ 抓取最新外資買賣超資料，請稍候...")
     try:
-        report_message = fetch_foreign_investor_data(today)
+        report_message = fetch_fubon_moneydj_data()
         await ctx.send(report_message)
     except Exception as e:
-        await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}\n(可能今日未開盤或交易所尚未更新資料)")
-# -----------------------------
+        await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
 @tasks.loop(time=report_time)
 async def daily_report():
@@ -55,75 +51,67 @@ async def daily_report():
     if channel:
         await channel.send("🔄 定時任務：正在抓取今日外資買賣超資料...")
         try:
-            report_message = fetch_foreign_investor_data(today)
+            report_message = fetch_fubon_moneydj_data()
             await channel.send(report_message)
         except Exception as e:
-            await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}\n(可能今日未開盤或交易所尚未更新資料)")
+            await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
-def fetch_foreign_investor_data(date_obj):
-    # 轉換日期格式
-    twse_date = date_obj.strftime("%Y%m%d")          # 上市格式: 20240304
-    tpex_date = f"{date_obj.year - 1911}/{date_obj.strftime('%m/%d')}"  # 上櫃格式: 113/03/04
-
-    msg = f"📊 **【外資今日買賣超前十檔統整】** ({date_obj.strftime('%Y-%m-%d')})\n\n"
-
-    # --- 1. 抓取上市 (TWSE) 資料 ---
-    try:
-        twse_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={twse_date}&selectType=ALL&response=json"
-        res = requests.get(twse_url).json()
-        if res.get('stat') == 'OK':
-            df_twse = pd.DataFrame(res['data'], columns=res['fields'])
-            net_col = [c for c in df_twse.columns if '外陸資買賣超股數(不含外資自營商)' in c or '買賣超股數' in c][0]
-            df_twse = df_twse[['證券代號', '證券名稱', net_col]].copy()
-            df_twse.columns = ['Code', 'Name', 'Net']
+def fetch_fubon_moneydj_data():
+    twse_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=0&C=1"
+    tpex_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=1&C=1"
+    
+    # 加上偽裝瀏覽器的標頭，避免被當作機器人阻擋
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    }
+    
+    msg = f"📊 **【外資買賣超前十檔統整】**\n*(資料來源：富邦/MoneyDJ)*\n\n"
+    
+    for market, url in [("上市", twse_url), ("上櫃", tpex_url)]:
+        try:
+            res = requests.get(url, headers=headers)
+            # MoneyDJ 的網頁編碼通常是 Big5
+            res.encoding = 'big5'
+            soup = BeautifulSoup(res.text, 'html.parser')
             
-            df_twse['Net'] = df_twse['Net'].astype(str).str.replace(',', '').astype(float) / 1000
-            df_twse = df_twse[df_twse['Code'].str.len() == 4] # 篩選一般股票
-
-            top_buy_twse = df_twse.nlargest(10, 'Net')
-            top_sell_twse = df_twse.nsmallest(10, 'Net')
-
-            msg += "**📈 上市外資買超前十名**\n"
-            for i, row in enumerate(top_buy_twse.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code})：{int(row.Net):,} 張\n"
+            # 嘗試抓取網頁上的「資料日期」
+            date_text = ""
+            for div in soup.find_all('div'):
+                if div.text and '資料日期' in div.text:
+                    date_text = div.text.strip().replace('資料日期：', '')
+                    break
             
-            msg += "\n**📉 上市外資賣超前十名**\n"
-            for i, row in enumerate(top_sell_twse.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code})：{int(row.Net):,} 張\n"
-        else:
-            msg += "⚠️ 查無今日上市資料 (可能為假日或未更新)\n"
-    except Exception as e:
-        msg += f"⚠️ 上市資料抓取失敗 ({e})\n"
-
-    msg += "\n-----------------------\n\n"
-
-    # --- 2. 抓取上櫃 (TPEx) 資料 ---
-    try:
-        tpex_url = f"https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&o=json&se=EW&t=D&d={tpex_date}"
-        res = requests.get(tpex_url).json()
-        if res.get('aaData'):
-            df_tpex = pd.DataFrame(res['aaData'])
-            df_tpex = df_tpex[[0, 1, 4]].copy()
-            df_tpex.columns = ['Code', 'Name', 'Net']
+            msg += f"📅 **{market}資料日期：{date_text}**\n"
             
-            df_tpex['Net'] = df_tpex['Net'].astype(str).str.replace(',', '').astype(float) / 1000
-            df_tpex = df_tpex[df_tpex['Code'].str.len() == 4] 
-
-            top_buy_tpex = df_tpex.nlargest(10, 'Net')
-            top_sell_tpex = df_tpex.nsmallest(10, 'Net')
-
-            msg += "**📈 上櫃外資買超前十名**\n"
-            for i, row in enumerate(top_buy_tpex.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code})：{int(row.Net):,} 張\n"
+            buy_list = []
+            sell_list = []
             
-            msg += "\n**📉 上櫃外資賣超前十名**\n"
-            for i, row in enumerate(top_sell_tpex.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code})：{int(row.Net):,} 張\n"
-        else:
-            msg += "⚠️ 查無今日上櫃資料\n"
-    except Exception as e:
-        msg += f"⚠️ 上櫃資料抓取失敗 ({e})\n"
-
+            # 尋找所有表格行 (tr)
+            rows = soup.find_all('tr')
+            for row in rows:
+                # 取出該行所有的儲存格 (td)
+                cols = [td.text.strip() for td in row.find_all('td')]
+                
+                # 富邦資料表的特徵：長度 >= 6，且第一欄為數字(名次)
+                # 欄位對應：[0]名次, [1]股票(買超), [2]買超張數, [3]名次, [4]股票(賣超), [5]賣超張數
+                if len(cols) >= 6 and cols[0].isdigit():
+                    if len(buy_list) < 10:
+                        buy_list.append(f"{cols[0]}. {cols[1]}：{cols[2]} 張")
+                    
+                    if cols[3].isdigit() and len(sell_list) < 10:
+                        sell_list.append(f"{cols[3]}. {cols[4]}：{cols[5]} 張")
+                        
+                # 抓滿十名就提早結束迴圈
+                if len(buy_list) >= 10 and len(sell_list) >= 10:
+                    break
+                    
+            msg += f"**📈 {market}外資買超前十名**\n" + "\n".join(buy_list) + "\n\n"
+            msg += f"**📉 {market}外資賣超前十名**\n" + "\n".join(sell_list) + "\n"
+            msg += "\n-----------------------\n\n"
+            
+        except Exception as e:
+            msg += f"⚠️ {market}資料抓取失敗 ({e})\n\n"
+            
     return msg
 
 if __name__ == "__main__":
