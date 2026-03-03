@@ -31,7 +31,7 @@ async def on_ready():
         daily_report.start()
         print("已啟動每晚 8 點的外資籌碼排程播報任務。")
 
-@bot.command(name='籌碼', help='手動查詢最新外資買賣超前十名')
+@bot.command(name='外資', help='手動查詢最新外資買賣超前十名')
 async def manual_report(ctx):
     await ctx.send("🔄 正在抓取無敵模式籌碼資料，請稍候...")
     try:
@@ -126,3 +126,4 @@ if __name__ == "__main__":
         print("請確認已設置 DISCORD_TOKEN 環境變數！")
     else:
         bot.run(TOKEN)
+
