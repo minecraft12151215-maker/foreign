@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 import datetime
 import requests
 from bs4 import BeautifulSoup
+import urllib3
+
+# 👉 【終極解藥】隱藏並忽略所有的 SSL 憑證警告！
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 載入 .env 變數
 load_dotenv()
@@ -29,7 +33,7 @@ async def on_ready():
 
 @bot.command(name='籌碼', help='手動查詢最新外資買賣超前十名')
 async def manual_report(ctx):
-    await ctx.send("🔄 正在從富邦 MoneyDJ 抓取最新外資買賣超資料，請稍候...")
+    await ctx.send("🔄 啟動無敵模式抓取資料中，請稍候...")
     try:
         report_message = fetch_fubon_moneydj_data()
         await ctx.send(report_message)
@@ -60,7 +64,6 @@ def fetch_fubon_moneydj_data():
     twse_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=0&C=1"
     tpex_url = "https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=1&C=1"
     
-    # 加上偽裝瀏覽器的標頭，避免被當作機器人阻擋
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
     }
@@ -69,13 +72,13 @@ def fetch_fubon_moneydj_data():
     
     for market, url in [("上市", twse_url), ("上櫃", tpex_url)]:
         try:
-            res = requests.get(url, headers=headers)
-            # MoneyDJ 的網頁編碼通常是 Big5
+            # 👉 【關鍵就在這】加上 verify=False，不管憑證有沒有過期都強硬抓取！
+            res = requests.get(url, headers=headers, verify=False, timeout=10)
             res.encoding = 'big5'
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 嘗試抓取網頁上的「資料日期」
-            date_text = ""
+            # 抓取網頁上的資料日期
+            date_text = "今日"
             for div in soup.find_all('div'):
                 if div.text and '資料日期' in div.text:
                     date_text = div.text.strip().replace('資料日期：', '')
@@ -86,14 +89,12 @@ def fetch_fubon_moneydj_data():
             buy_list = []
             sell_list = []
             
-            # 尋找所有表格行 (tr)
+            # 尋找所有表格行
             rows = soup.find_all('tr')
             for row in rows:
-                # 取出該行所有的儲存格 (td)
                 cols = [td.text.strip() for td in row.find_all('td')]
                 
-                # 富邦資料表的特徵：長度 >= 6，且第一欄為數字(名次)
-                # 欄位對應：[0]名次, [1]股票(買超), [2]買超張數, [3]名次, [4]股票(賣超), [5]賣超張數
+                # 富邦資料表的特徵
                 if len(cols) >= 6 and cols[0].isdigit():
                     if len(buy_list) < 10:
                         buy_list.append(f"{cols[0]}. {cols[1]}：{cols[2]} 張")
@@ -101,10 +102,14 @@ def fetch_fubon_moneydj_data():
                     if cols[3].isdigit() and len(sell_list) < 10:
                         sell_list.append(f"{cols[3]}. {cols[4]}：{cols[5]} 張")
                         
-                # 抓滿十名就提早結束迴圈
+                # 抓滿十名就結束
                 if len(buy_list) >= 10 and len(sell_list) >= 10:
                     break
                     
+            if not buy_list:
+                msg += f"⚠️ 抓不到{market}資料，可能網頁格式變更或維護中。\n\n"
+                continue
+
             msg += f"**📈 {market}外資買超前十名**\n" + "\n".join(buy_list) + "\n\n"
             msg += f"**📉 {market}外資賣超前十名**\n" + "\n".join(sell_list) + "\n"
             msg += "\n-----------------------\n\n"
