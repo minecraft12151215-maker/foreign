@@ -7,7 +7,7 @@ import requests
 from bs4 import BeautifulSoup
 import urllib3
 
-# 👉 【終極解藥】隱藏並忽略所有的 SSL 憑證警告！
+# 隱藏並忽略所有的 SSL 憑證警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 載入 .env 變數
@@ -33,7 +33,7 @@ async def on_ready():
 
 @bot.command(name='籌碼', help='手動查詢最新外資買賣超前十名')
 async def manual_report(ctx):
-    await ctx.send("🔄 啟動無敵模式抓取資料中，請稍候...")
+    await ctx.send("🔄 正在抓取無敵模式籌碼資料，請稍候...")
     try:
         report_message = fetch_fubon_moneydj_data()
         await ctx.send(report_message)
@@ -68,11 +68,11 @@ def fetch_fubon_moneydj_data():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
     }
     
-    msg = f"📊 **【外資買賣超前十檔統整】**\n*(資料來源：富邦/MoneyDJ)*\n\n"
+    msg = f"📊 **【外資今日買賣超前十檔統整】**\n*(資料來源：富邦/MoneyDJ)*\n\n"
     
     for market, url in [("上市", twse_url), ("上櫃", tpex_url)]:
         try:
-            # 👉 【關鍵就在這】加上 verify=False，不管憑證有沒有過期都強硬抓取！
+            # 加上 verify=False 強制忽略憑證
             res = requests.get(url, headers=headers, verify=False, timeout=10)
             res.encoding = 'big5'
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -94,24 +94,26 @@ def fetch_fubon_moneydj_data():
             for row in rows:
                 cols = [td.text.strip() for td in row.find_all('td')]
                 
-                # 富邦資料表的特徵
-                if len(cols) >= 6 and cols[0].isdigit():
-                    if len(buy_list) < 10:
-                        buy_list.append(f"{cols[0]}. {cols[1]}：{cols[2]} 張")
+                # 富邦網頁表格總共有 10 個欄位
+                # 買超：[0]名次, [1]股票, [2]張數, [3]收盤價, [4]漲跌
+                # 賣超：[5]名次, [6]股票, [7]張數, [8]收盤價, [9]漲跌
+                if len(cols) >= 8:
+                    if cols[0].isdigit() and len(buy_list) < 10:
+                        buy_list.append(f"{cols[0]}. {cols[1]} ➔ {cols[2]} 張")
                     
-                    if cols[3].isdigit() and len(sell_list) < 10:
-                        sell_list.append(f"{cols[3]}. {cols[4]}：{cols[5]} 張")
+                    if cols[5].isdigit() and len(sell_list) < 10:
+                        sell_list.append(f"{cols[5]}. {cols[6]} ➔ {cols[7]} 張")
                         
                 # 抓滿十名就結束
                 if len(buy_list) >= 10 and len(sell_list) >= 10:
                     break
                     
             if not buy_list:
-                msg += f"⚠️ 抓不到{market}資料，可能網頁格式變更或維護中。\n\n"
+                msg += f"⚠️ 抓不到{market}資料，可能網頁格式變更。\n\n"
                 continue
 
-            msg += f"**📈 {market}外資買超前十名**\n" + "\n".join(buy_list) + "\n\n"
-            msg += f"**📉 {market}外資賣超前十名**\n" + "\n".join(sell_list) + "\n"
+            msg += f"**📈 {market}外資買超**\n" + "\n".join(buy_list) + "\n\n"
+            msg += f"**📉 {market}外資賣超**\n" + "\n".join(sell_list) + "\n"
             msg += "\n-----------------------\n\n"
             
         except Exception as e:
